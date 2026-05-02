@@ -95,6 +95,9 @@ export function RecordingControls() {
 
   const handleGenerateRemoteSession = async () => {
     try {
+      setError(null);
+      setSuccessMessage(null);
+
       if (!isAuthenticated()) {
         setError("Please log in to use remote recording");
         return;
