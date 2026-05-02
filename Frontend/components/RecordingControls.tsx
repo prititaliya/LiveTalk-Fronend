@@ -35,21 +35,60 @@ export function RecordingControls() {
   const [showQRModal, setShowQRModal] = useState(false);
   const [qrCodeData, setQrCodeData] = useState<string | null>(null);
   const [sessionToken, setSessionToken] = useState<string | null>(null);
-  const [remoteWsRef, setRemoteWsRef] = useState<WebSocket | null>(null);
+  const [remoteWs, setRemoteWs] = useState<WebSocket | null>(null);
   const [mobileConnected, setMobileConnected] = useState(false);
-  
+
   const connectionRef = useRef<RoomConnection | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const remoteWsRef = useRef<WebSocket | null>(null);
 
-  // Format time as MM:SS
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   };
 
-  // Generate remote session and QR code
+  const connectRemoteWebSocket = (token: string) => {
+    try {
+      let wsUrl = API_URL.replace("http://", "ws://").replace("https://", "wss://");
+      wsUrl = wsUrl.replace(/\/$/, "");
+      const ws = new WebSocket(`${wsUrl}/ws/remote/${token}?device=laptop`);
+
+      ws.onopen = () => {
+        console.log("Remote control WebSocket connected");
+        setMobileConnected(true);
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data);
+          if (message.type === "recording_state_update") {
+            console.log("State update from mobile:", message.state);
+          } else if (message.type === "connection_established") {
+            setMobileConnected(true);
+          }
+        } catch (e) {
+          console.error("Error parsing remote WebSocket message:", e);
+        }
+      };
+
+      ws.onerror = (err) => {
+        console.error("Remote WebSocket error:", err);
+      };
+
+      ws.onclose = () => {
+        console.log("Remote WebSocket disconnected");
+        setMobileConnected(false);
+      };
+
+      remoteWsRef.current = ws;
+      setRemoteWs(ws);
+    } catch (err) {
+      console.error("Failed to connect remote WebSocket:", err);
+    }
+  };
+
   const handleGenerateRemoteSession = async () => {
     try {
       if (!isAuthenticated()) {
@@ -81,7 +120,6 @@ export function RecordingControls() {
       setSessionToken(data.session_token);
       setShowQRModal(true);
 
-      // Connect to remote control WebSocket
       connectRemoteWebSocket(data.session_token);
     } catch (err) {
       console.error("Error generating remote session:", err);
@@ -89,76 +127,68 @@ export function RecordingControls() {
     }
   };
 
-  // Connect to remote control WebSocket
-  const connectRemoteWebSocket = (token: string) => {
+  const sendRemoteCommand = (command: string) => {
+    const ws = remoteWsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(
+        JSON.stringify({
+          type: "remote_command",
+          command,
+        })
+      );
+    }
+  };
+
+  const connectWebSocket = (room: string) => {
     try {
-      // Convert HTTP/HTTPS URL to WebSocket URL
       let wsUrl = API_URL.replace("http://", "ws://").replace("https://", "wss://");
-      // Remove trailing slash if present
       wsUrl = wsUrl.replace(/\/$/, "");
-      const ws = new WebSocket(`${wsUrl}/ws/remote/${token}?device=laptop`);
+      const ws = new WebSocket(`${wsUrl}/ws/user_transcripts/${room}`);
 
       ws.onopen = () => {
-        console.log("Remote control WebSocket connected");
-        setMobileConnected(true);
+        console.log("WebSocket connected for transcripts");
       };
 
       ws.onmessage = (event) => {
         try {
-          const message = JSON.parse(event.data);
-          if (message.type === "recording_state_update") {
-            // Handle state updates from mobile
-            console.log("State update from mobile:", message.state);
-          } else if (message.type === "connection_established") {
-            setMobileConnected(true);
+          const data = JSON.parse(event.data);
+
+          if (data.type === "initial_data") {
+            setTranscripts(data.data.transcripts || []);
+          } else if (data.type === "transcript_update") {
+            setTranscripts((prev) => [...prev, data.data]);
           }
         } catch (e) {
-          console.error("Error parsing remote WebSocket message:", e);
+          console.error("Failed to parse WebSocket message:", e);
         }
       };
 
       ws.onerror = (err) => {
-        console.error("Remote WebSocket error:", err);
+        console.error("WebSocket error:", err);
       };
 
       ws.onclose = () => {
-        console.log("Remote WebSocket disconnected");
-        setMobileConnected(false);
+        console.log("WebSocket disconnected");
       };
 
-      setRemoteWsRef(ws);
+      wsRef.current = ws;
     } catch (err) {
-      console.error("Failed to connect remote WebSocket:", err);
+      console.error("Failed to connect WebSocket:", err);
     }
   };
 
-  // Send command to mobile
-  const sendRemoteCommand = (command: string) => {
-    if (remoteWsRef && remoteWsRef.readyState === WebSocket.OPEN) {
-      remoteWsRef.send(JSON.stringify({
-        type: "remote_command",
-        command: command
-      }));
-    }
-  };
-
-  // Start recording
   const handleStart = async () => {
     try {
       setError(null);
       setIsConnecting(true);
 
-      // Request microphone permission first
       await requestMicrophonePermission();
 
-      // Generate unique room name
       const newRoomName = generateRoomName();
       setRoomName(newRoomName);
 
-      // Request token from backend
       const { token, url } = await requestToken(newRoomName, "user");
 
-      // Connect to LiveKit room
       const connection = await connectToRoom(
         token,
         url,
@@ -167,13 +197,11 @@ export function RecordingControls() {
           setIsRecording(true);
           setIsConnecting(false);
           setElapsedTime(0);
-          
-          // Start timer
+
           timerRef.current = setInterval(() => {
             setElapsedTime((prev) => prev + 1);
           }, 1000);
 
-          // Connect to WebSocket for transcript updates
           connectWebSocket(newRoomName);
         },
         () => {
@@ -196,51 +224,6 @@ export function RecordingControls() {
     }
   };
 
-  // Connect to WebSocket for real-time transcript updates
-  const connectWebSocket = (room: string) => {
-    try {
-      // Convert HTTP/HTTPS URL to WebSocket URL
-      let wsUrl = API_URL.replace("http://", "ws://").replace("https://", "wss://");
-      // Remove trailing slash if present
-      wsUrl = wsUrl.replace(/\/$/, "");
-      const ws = new WebSocket(`${wsUrl}/ws/transcripts/${room}`);
-
-      ws.onopen = () => {
-        console.log("WebSocket connected for transcripts");
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          
-          if (data.type === "initial_data") {
-            // Load existing transcripts
-            setTranscripts(data.data.transcripts || []);
-          } else if (data.type === "transcript_update") {
-            // Add new transcript entry
-            setTranscripts((prev) => [...prev, data.data]);
-          }
-        } catch (e) {
-          console.error("Failed to parse WebSocket message:", e);
-        }
-      };
-
-      ws.onerror = (err) => {
-        console.error("WebSocket error:", err);
-      };
-
-      ws.onclose = () => {
-        console.log("WebSocket disconnected");
-      };
-
-      wsRef.current = ws;
-    } catch (err) {
-      console.error("Failed to connect WebSocket:", err);
-      // Don't fail the recording if WebSocket fails
-    }
-  };
-
-  // Stop recording
   const handleStop = async () => {
     try {
       setIsRecording(false);
@@ -249,29 +232,24 @@ export function RecordingControls() {
       setError(null);
       setSuccessMessage(null);
 
-      // Stop timer
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
       }
 
-      // Close WebSocket connection
       if (wsRef.current) {
         wsRef.current.close();
         wsRef.current = null;
       }
 
-      // Disconnect from LiveKit room
       if (connectionRef.current) {
         await disconnectFromRoom(connectionRef.current);
         connectionRef.current = null;
       }
 
-      // Save transcript to Redis if room name exists
       const currentRoomName = roomName;
       if (currentRoomName) {
         try {
-          // Check if user is authenticated
           if (!isAuthenticated()) {
             setError("Please log in to save transcripts");
             return;
@@ -296,7 +274,6 @@ export function RecordingControls() {
           const data = await response.json();
           if (data.success) {
             setSuccessMessage(`Transcript saved successfully! Meeting ID: ${data.meeting_id}`);
-            // Clear transcripts after successful save
             setTranscripts([]);
           } else {
             throw new Error(data.message || "Failed to save transcript");
@@ -304,11 +281,8 @@ export function RecordingControls() {
         } catch (saveError) {
           console.error("Error saving transcript:", saveError);
           setError(
-            saveError instanceof Error
-              ? saveError.message
-              : "Failed to save transcript to database"
+            saveError instanceof Error ? saveError.message : "Failed to save transcript to database"
           );
-          // Don't fail the stop operation if save fails
         }
       }
 
@@ -321,7 +295,6 @@ export function RecordingControls() {
     }
   };
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (timerRef.current) {
@@ -330,18 +303,17 @@ export function RecordingControls() {
       if (wsRef.current) {
         wsRef.current.close();
       }
-      if (remoteWsRef) {
-        remoteWsRef.close();
+      if (remoteWsRef.current) {
+        remoteWsRef.current.close();
       }
       if (connectionRef.current) {
         disconnectFromRoom(connectionRef.current);
       }
     };
-  }, [remoteWsRef]);
+  }, []);
 
   return (
     <div className="flex flex-col items-center gap-6">
-      {/* Error message */}
       {error && (
         <div className="flex items-center gap-2 text-destructive bg-destructive/10 px-4 py-2 rounded-lg">
           <AlertCircle className="h-4 w-4" />
@@ -349,38 +321,25 @@ export function RecordingControls() {
         </div>
       )}
 
-      {/* Success message */}
       {successMessage && (
         <div className="flex items-center gap-2 text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 px-4 py-2 rounded-lg">
           <span className="text-sm">{successMessage}</span>
         </div>
       )}
 
-      {/* Recording indicator */}
       <div className="relative">
-        {isRecording && (
-          <div className="absolute inset-0 rounded-full bg-primary/20 animate-pulse" />
-        )}
+        {isRecording && <div className="absolute inset-0 rounded-full bg-primary/20 animate-pulse" />}
         <div
           className={`relative flex h-32 w-32 items-center justify-center rounded-full transition-colors ${
-            isRecording
-              ? "bg-destructive text-destructive-foreground"
-              : "bg-primary text-primary-foreground"
+            isRecording ? "bg-destructive text-destructive-foreground" : "bg-primary text-primary-foreground"
           }`}
         >
-          {isRecording ? (
-            <Square className="h-12 w-12" />
-          ) : (
-            <Mic className="h-12 w-12" />
-          )}
+          {isRecording ? <Square className="h-12 w-12" /> : <Mic className="h-12 w-12" />}
         </div>
       </div>
 
-      {/* Timer and status */}
       <div className="text-center">
-        <div className="text-4xl font-mono font-bold mb-2">
-          {formatTime(elapsedTime)}
-        </div>
+        <div className="text-4xl font-mono font-bold mb-2">{formatTime(elapsedTime)}</div>
         <p className="text-sm text-muted-foreground">
           {isConnecting
             ? "Connecting..."
@@ -390,12 +349,9 @@ export function RecordingControls() {
             ? "Recording in progress..."
             : "Ready to record"}
         </p>
-        {roomName && (
-          <p className="text-xs text-muted-foreground mt-1">Room: {roomName}</p>
-        )}
+        {roomName && <p className="text-xs text-muted-foreground mt-1">Room: {roomName}</p>}
       </div>
 
-      {/* Control buttons */}
       <div className="flex flex-col gap-4 items-center">
         <div className="flex gap-4">
           {!isRecording ? (
@@ -421,8 +377,7 @@ export function RecordingControls() {
             </Button>
           )}
         </div>
-        
-        {/* Remote Recording Button */}
+
         {!isRecording && (
           <Button
             variant="outline"
@@ -435,7 +390,6 @@ export function RecordingControls() {
           </Button>
         )}
 
-        {/* Mobile Connection Status */}
         {mobileConnected && (
           <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400">
             <div className="h-2 w-2 bg-green-500 rounded-full animate-pulse"></div>
@@ -444,7 +398,6 @@ export function RecordingControls() {
         )}
       </div>
 
-      {/* QR Code Modal */}
       {showQRModal && qrCodeData && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 max-w-md w-full">
@@ -455,9 +408,10 @@ export function RecordingControls() {
                 className="h-8 w-8 p-0"
                 onClick={() => {
                   setShowQRModal(false);
-                  if (remoteWsRef) {
-                    remoteWsRef.close();
-                    setRemoteWsRef(null);
+                  if (remoteWsRef.current) {
+                    remoteWsRef.current.close();
+                    remoteWsRef.current = null;
+                    setRemoteWs(null);
                   }
                 }}
               >
@@ -479,7 +433,6 @@ export function RecordingControls() {
         </div>
       )}
 
-      {/* Transcript preview */}
       {transcripts.length > 0 && (
         <div className="w-full max-w-2xl mt-8">
           <h3 className="text-lg font-semibold mb-4">Live Transcript</h3>
@@ -496,4 +449,3 @@ export function RecordingControls() {
     </div>
   );
 }
-
