@@ -496,4 +496,3 @@ export function RecordingControls() {
     </div>
   );
 }
-
