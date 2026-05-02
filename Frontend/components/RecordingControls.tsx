@@ -137,7 +137,7 @@ export function RecordingControls() {
   const connectWebSocket = (room: string) => {
     try {
       const wsUrl = API_URL.replace(/^http(s?):\/\//, "ws$1://").replace(/\/$/, "");
-      const ws = new WebSocket(`${wsUrl}/ws/transcripts/${room}`);
+      const ws = new WebSocket(`${wsUrl}/ws/user_transcripts/${room}`);
 
       ws.onopen = () => {
         console.log("WebSocket connected for transcripts");
