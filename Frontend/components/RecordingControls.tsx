@@ -96,7 +96,7 @@ export function RecordingControls() {
   const connectRemoteWebSocket = (token: string) => {
     try {
       const wsUrl = getWebSocketBaseUrl();
-      const ws = new WebSocket(`${wsUrl}/ws/remote/${token}?device=laptop`);
+      const ws = new WebSocket(`${wsUrl}/ws/remote_session/${token}?device=laptop`);
 
       ws.onopen = () => {
         console.log("Remote control WebSocket connected");
