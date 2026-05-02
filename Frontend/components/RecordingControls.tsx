@@ -13,7 +13,6 @@ import {
 } from "@/lib/livekit";
 import { getAuthHeaders, isAuthenticated } from "@/lib/auth";
 
-// Normalize API URL to remove trailing slash
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/+$/, "");
 
 interface TranscriptEntry {
@@ -40,7 +39,7 @@ export function RecordingControls() {
   const connectionRef = useRef<RoomConnection | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const remoteWsRef = useRef<WebSocket | null>(null);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -58,8 +57,7 @@ export function RecordingControls() {
 
   const connectRemoteWebSocket = (token: string) => {
     try {
-      let wsUrl = API_URL.replace("http://", "ws://").replace("https://", "wss://");
-      wsUrl = wsUrl.replace(/\/$/, "");
+      const wsUrl = API_URL.replace(/^http(s?):\/\//, "ws$1://").replace(/\/$/, "");
       const ws = new WebSocket(`${wsUrl}/ws/remote/${token}?device=laptop`);
 
       ws.onopen = () => {
@@ -133,21 +131,9 @@ export function RecordingControls() {
     }
   };
 
-  const sendRemoteCommand = (command: string) => {
-    if (remoteWsRef.current && remoteWsRef.current.readyState === WebSocket.OPEN) {
-      remoteWsRef.current.send(
-        JSON.stringify({
-          type: "remote_command",
-          command: command,
-        })
-      );
-    }
-  };
-
   const connectWebSocket = (room: string) => {
     try {
-      let wsUrl = API_URL.replace("http://", "ws://").replace("https://", "wss://");
-      wsUrl = wsUrl.replace(/\/$/, "");
+      const wsUrl = API_URL.replace(/^http(s?):\/\//, "ws$1://").replace(/\/$/, "");
       const ws = new WebSocket(`${wsUrl}/ws/transcripts/${room}`);
 
       ws.onopen = () => {
