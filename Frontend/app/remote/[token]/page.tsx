@@ -2,10 +2,9 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { Play, Square, Pause, RotateCcw, AlertCircle, CheckCircle2, Wifi, WifiOff } from "lucide-react";
+import { Play, Square, Pause, AlertCircle, CheckCircle2, Wifi, WifiOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-// Normalize API URL to remove trailing slash
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/+$/, "");
 
 type RecordingState = "idle" | "recording" | "paused" | "stopped";
@@ -15,104 +14,38 @@ export default function RemoteControlPage() {
   const params = useParams();
   const router = useRouter();
   const token = params.token as string;
-  
+
   const [roomName, setRoomName] = useState<string>("");
   const [recordingState, setRecordingState] = useState<RecordingState>("idle");
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("connecting");
   const [elapsedTime, setElapsedTime] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [sessionExpired, setSessionExpired] = useState(false);
-  
+
   const wsRef = useRef<WebSocket | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Format time as MM:SS
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   };
 
-  // Validate session on load
-  useEffect(() => {
-    const validateSession = async () => {
-      try {
-        const response = await fetch(`${API_URL}/api/remote/session/${token}`);
-        if (!response.ok) {
-          if (response.status === 404) {
-            setSessionExpired(true);
-            setError("Session not found or expired");
-            return;
-          }
-          throw new Error("Failed to validate session");
-        }
-        
-        const data = await response.json();
-        setRoomName(data.room_name);
-        setRecordingState(data.recording_state.state || "idle");
-        
-        // Connect to WebSocket
-        connectWebSocket();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to validate session");
-        setConnectionStatus("error");
-      }
-    };
-
-    if (token) {
-      validateSession();
-    }
-  }, [token]);
-
-  // Connect to WebSocket
-  const connectWebSocket = () => {
-    try {
-      // Convert HTTP/HTTPS URL to WebSocket URL
-      let wsUrl = API_URL.replace("http://", "ws://").replace("https://", "wss://");
-      // Remove trailing slash if present
-      wsUrl = wsUrl.replace(/\/$/, "");
-      const ws = new WebSocket(`${wsUrl}/ws/remote/${token}?device=mobile`);
-      
-      ws.onopen = () => {
-        setConnectionStatus("connected");
-        setError(null);
-        console.log("WebSocket connected");
-      };
-      
-      ws.onmessage = (event) => {
-        try {
-          const message = JSON.parse(event.data);
-          handleWebSocketMessage(message);
-        } catch (err) {
-          console.error("Error parsing WebSocket message:", err);
-        }
-      };
-      
-      ws.onerror = (error) => {
-        console.error("WebSocket error:", error);
-        setConnectionStatus("error");
-        setError("Connection error");
-      };
-      
-      ws.onclose = () => {
-        setConnectionStatus("disconnected");
-        // Auto-reconnect after 3 seconds
-        if (!sessionExpired) {
-          reconnectTimeoutRef.current = setTimeout(() => {
-            connectWebSocket();
-          }, 3000);
-        }
-      };
-      
-      wsRef.current = ws;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to connect");
-      setConnectionStatus("error");
+  const stopTimer = () => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
     }
   };
 
-  // Handle WebSocket messages
+  const startTimer = () => {
+    if (timerRef.current) return;
+    timerRef.current = setInterval(() => {
+      setElapsedTime((prev) => prev + 1);
+    }, 1000);
+  };
+
   const handleWebSocketMessage = (message: any) => {
     switch (message.type) {
       case "connection_established":
@@ -138,35 +71,63 @@ export default function RemoteControlPage() {
     }
   };
 
-  // Timer management
-  const startTimer = () => {
-    if (timerRef.current) return;
-    timerRef.current = setInterval(() => {
-      setElapsedTime((prev) => prev + 1);
-    }, 1000);
-  };
+  const connectWebSocket = () => {
+    try {
+      let wsUrl = API_URL.replace("http://", "ws://").replace("https://", "wss://");
+      wsUrl = wsUrl.replace(/\/$/, "");
+      const ws = new WebSocket(`${wsUrl}/ws/remote_session/${token}?device=mobile`);
 
-  const stopTimer = () => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
+      ws.onopen = () => {
+        setConnectionStatus("connected");
+        setError(null);
+        console.log("WebSocket connected");
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data);
+          handleWebSocketMessage(message);
+        } catch (err) {
+          console.error("Error parsing WebSocket message:", err);
+        }
+      };
+
+      ws.onerror = (error) => {
+        console.error("WebSocket error:", error);
+        setConnectionStatus("error");
+        setError("Connection error");
+      };
+
+      ws.onclose = () => {
+        setConnectionStatus("disconnected");
+        if (!sessionExpired) {
+          reconnectTimeoutRef.current = setTimeout(() => {
+            connectWebSocket();
+          }, 3000);
+        }
+      };
+
+      wsRef.current = ws;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to connect");
+      setConnectionStatus("error");
     }
   };
 
-  // Send command to server
   const sendCommand = (command: string) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       setError("Not connected to server");
       return;
     }
 
-    wsRef.current.send(JSON.stringify({
-      type: "remote_command",
-      command: command
-    }));
+    wsRef.current.send(
+      JSON.stringify({
+        type: "remote_command",
+        command: command,
+      })
+    );
   };
 
-  // Command handlers
   const handleStart = () => {
     setError(null);
     sendCommand("start_recording");
@@ -188,7 +149,34 @@ export default function RemoteControlPage() {
     startTimer();
   };
 
-  // Cleanup on unmount
+  useEffect(() => {
+    const validateSession = async () => {
+      try {
+        const response = await fetch(`${API_URL}/api/remote/session/${token}`);
+        if (!response.ok) {
+          if (response.status === 404) {
+            setSessionExpired(true);
+            setError("Session not found or expired");
+            return;
+          }
+          throw new Error("Failed to validate session");
+        }
+
+        const data = await response.json();
+        setRoomName(data.room_name);
+        setRecordingState(data.recording_state.state || "idle");
+        connectWebSocket();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to validate session");
+        setConnectionStatus("error");
+      }
+    };
+
+    if (token) {
+      validateSession();
+    }
+  }, [token]);
+
   useEffect(() => {
     return () => {
       if (wsRef.current) {
@@ -203,7 +191,6 @@ export default function RemoteControlPage() {
     };
   }, []);
 
-  // Start timer when recording starts
   useEffect(() => {
     if (recordingState === "recording" && !timerRef.current) {
       startTimer();
@@ -221,9 +208,7 @@ export default function RemoteControlPage() {
           <p className="text-gray-600 dark:text-gray-300 mb-6">
             This remote control session has expired. Please scan a new QR code from your laptop.
           </p>
-          <Button onClick={() => router.push("/")}>
-            Go to Home
-          </Button>
+          <Button onClick={() => router.push("/")}>Go to Home</Button>
         </div>
       </div>
     );
@@ -232,7 +217,6 @@ export default function RemoteControlPage() {
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 p-4">
       <div className="max-w-md mx-auto">
-        {/* Header */}
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 mb-4">
           <div className="flex items-center justify-between mb-4">
             <h1 className="text-2xl font-bold">Remote Control</h1>
@@ -243,18 +227,21 @@ export default function RemoteControlPage() {
                 <WifiOff className="h-5 w-5 text-red-500" />
               )}
               <span className="text-sm text-gray-600 dark:text-gray-300">
-                {connectionStatus === "connected" ? "Connected" : 
-                 connectionStatus === "connecting" ? "Connecting..." : "Disconnected"}
+                {connectionStatus === "connected"
+                  ? "Connected"
+                  : connectionStatus === "connecting"
+                    ? "Connecting..."
+                    : "Disconnected"}
               </span>
             </div>
           </div>
-          
+
           {roomName && (
             <div className="text-sm text-gray-600 dark:text-gray-300">
               Room: <span className="font-semibold">{roomName}</span>
             </div>
           )}
-          
+
           {recordingState === "recording" && (
             <div className="mt-4 flex items-center gap-2">
               <div className="h-3 w-3 bg-red-500 rounded-full animate-pulse"></div>
@@ -263,7 +250,6 @@ export default function RemoteControlPage() {
           )}
         </div>
 
-        {/* Error Message */}
         {error && (
           <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 mb-4 flex items-center gap-2">
             <AlertCircle className="h-5 w-5 text-red-500" />
@@ -271,7 +257,6 @@ export default function RemoteControlPage() {
           </div>
         )}
 
-        {/* Control Buttons */}
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 space-y-4">
           {recordingState === "idle" || recordingState === "stopped" ? (
             <Button
@@ -322,7 +307,6 @@ export default function RemoteControlPage() {
             </>
           ) : null}
 
-          {/* Status Indicator */}
           <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700">
             <div className="flex items-center justify-center gap-2 text-sm text-gray-600 dark:text-gray-300">
               {connectionStatus === "connected" ? (
@@ -343,4 +327,3 @@ export default function RemoteControlPage() {
     </div>
   );
 }
-
