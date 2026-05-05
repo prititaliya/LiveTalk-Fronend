@@ -1,0 +1,52 @@
+# Node.js / Next.js / TypeScript
+node_modules/
+*.tsbuildinfo
+.next/
+out/
+build/
+coverage/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+
+# Local env files
+.env
+.env.*
+.env*.local
+
+# System files
+.DS_Store
+*.pem
+
+# Vercel
+.vercel/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.env
+*.venv
+venv/
+ENV/
+env/
+*.egg-info/
+*.egg
+
+# Misc
+.pnp
+.pnp.js
+
+# Editor directories and files
+.vscode/
+.idea/
+*.swp
+
+# Ignore generated files in Review-agent
+Review-agent/final_state.txt
+Review-agent/final_summary.md
+Review-agent/sample_code_diff.txt
+Review-agent/sample_comments.json
+Review-agent/sample_diff_stats.txt
