@@ -2,7 +2,15 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { Play, Square, Pause, AlertCircle, CheckCircle2, Wifi, WifiOff } from "lucide-react";
+import {
+  Play,
+  Square,
+  Pause,
+  AlertCircle,
+  CheckCircle2,
+  Wifi,
+  WifiOff,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/+$/, "");
@@ -75,7 +83,7 @@ export default function RemoteControlPage() {
     try {
       let wsUrl = API_URL.replace("http://", "ws://").replace("https://", "wss://");
       wsUrl = wsUrl.replace(/\/$/, "");
-      const ws = new WebSocket(`${wsUrl}/ws/remote_session/${token}?device=mobile`);
+      const ws = new WebSocket(`${wsUrl}/ws/remote_user_session/${token}?device=mobile`);
 
       ws.onopen = () => {
         setConnectionStatus("connected");
